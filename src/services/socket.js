@@ -1,11 +1,12 @@
 import { io } from 'socket.io-client';
 
-const SOCKET_URL = import.meta.env.DEV ? 'http://localhost:5003' : '';
+const SOCKET_URL = import.meta.env.DEV ? 'http://127.0.0.1:5003' : '';
 
 // Create socket instances for different namespaces
 export const createSocket = (namespace) => {
     return io(`${SOCKET_URL}${namespace}`, {
-        transports: ['websocket', 'polling'],
+        transports: ['polling'],
+        upgrade: false,
         reconnection: true,
         reconnectionDelay: 1000,
         reconnectionAttempts: 5,

@@ -24,7 +24,7 @@ export default function LaserControl() {
 
     // Track API calls to prevent WebSocket from overriding API responses
     const lastApiCallTime = useRef(0);
-    const API_PRIORITY_WINDOW = 500; // ms to ignore WebSocket updates after API call
+    const API_PRIORITY_WINDOW = 2000; // ms to ignore WebSocket updates after API call
 
     useEffect(() => {
         const socket = createSocket(NAMESPACES.LASER_STATUS);
@@ -82,6 +82,8 @@ export default function LaserControl() {
                 if (response.data.power !== undefined) {
                     setLaserPower(response.data.power);
                 }
+                // Extend the window after successful response to account for latency
+                lastApiCallTime.current = Date.now();
             } else {
                 console.error('Laser control failed:', response.data.error);
                 // Revert the UI state on error
@@ -106,7 +108,16 @@ export default function LaserControl() {
         try {
             // Mark API call time
             lastApiCallTime.current = Date.now();
-            await laserAPI.control(1, newValue);
+            const response = await laserAPI.control(1, newValue);
+
+            if (response.data.status === 200) {
+                // Update with confirmed value from server
+                if (response.data.power !== undefined) {
+                    setLaserPower(response.data.power);
+                }
+                // Extend the window after successful response
+                lastApiCallTime.current = Date.now();
+            }
         } catch (error) {
             console.error('Failed to set laser power:', error);
         }
