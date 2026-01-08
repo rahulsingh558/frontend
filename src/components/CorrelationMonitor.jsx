@@ -1,19 +1,22 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-    Card,
     CardContent,
     Typography,
     Box,
     Button,
     TextField,
-    Chip,
     Grid,
     Paper,
     InputAdornment,
+    MenuItem,
+    Select,
+    FormControl,
+    InputLabel
 } from '@mui/material';
 import { Timeline, PlayArrow, Stop } from '@mui/icons-material';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { createSocket, NAMESPACES } from '../services/socket';
+import { useTheme } from '@mui/material/styles';
 
 const CHANNEL_COLORS_DARK = [
     '#FF0000', // Red
@@ -37,89 +40,84 @@ const CHANNEL_COLORS_LIGHT = [
     '#424242', // Dark Grey/Black
 ];
 
-import { useTheme } from '@mui/material/styles';
-
-export default function CountrateMonitor({ isLaserOn = false }) {
+export default function CorrelationMonitor({ isLaserOn = false }) {
     const theme = useTheme();
     const [isRunning, setIsRunning] = useState(false);
-    const [selectedChannels, setSelectedChannels] = useState([1, 2]);
+
+    // Configuration State
+    const [ch1, setCh1] = useState(1);
+    const [ch2, setCh2] = useState(2);
     const [windowTime, setWindowTime] = useState(0.5);
+    const [binWidth, setBinWidth] = useState(1000); // ps
+    const [nBins, setNBins] = useState(50);
+
     const [data, setData] = useState([]);
     const socketRef = useRef(null);
-    const dataCountRef = useRef(0);
-    const MAX_DATA_POINTS = 100;
 
-    const channels = [1, 2, 3, 4, 5, 6, 7, 8];
-
-
-
-    // Lifecycle effect: Connect/Disconnect based on isRunning AND having active channels
+    // Lifecycle effect: Connect/Disconnect based on isRunning
     useEffect(() => {
-        const shouldConnect = isRunning && selectedChannels.length > 0;
+        if (isRunning) {
+            setData([]); // Reset plotting data
 
-        if (shouldConnect) {
-            // Reset data on new connection (start or resume from empty)
-            setData([]);
-            dataCountRef.current = 0;
-
-            socketRef.current = createSocket(NAMESPACES.COUNTRATE);
+            socketRef.current = createSocket(NAMESPACES.CORRELATION);
 
             socketRef.current.on('connect', () => {
-                console.log('Connected to countrate socket');
+                console.log('Connected to correlation socket');
                 // Initial configuration
                 socketRef.current.emit('configure', {
-                    ch: selectedChannels.join(','),
+                    ch: `${ch1},${ch2}`,
+                    bwidth: binWidth,
+                    nbins: nBins,
                     rtime: windowTime,
                 });
             });
 
             socketRef.current.on('configured', (response) => {
-                console.log('Countrate configured:', response);
+                console.log('Correlation configured:', response);
             });
 
-            socketRef.current.on('countrate', (response) => {
+            socketRef.current.on('correlation', (response) => {
                 if (response.status === 200) {
-                    const rtime = parseFloat(response.rtime);
-                    dataCountRef.current = Math.round((dataCountRef.current + rtime) * 100) / 100; // Track time, avoid float drift
+                    const tau = response.tau_ps; // Array of time delays in ps
+                    const counts = response.counts; // Array of counts
 
-                    const newDataPoint = {
-                        time: dataCountRef.current,
-                        ...response.rates,
-                    };
-
-                    setData((prevData) => {
-                        const newData = [...prevData, newDataPoint];
-                        // Keep last 30 samples
-                        return newData.slice(-30);
-                    });
+                    // Zip into object array for Recharts: [{tau: -100, count: 5}, ...]
+                    if (Array.isArray(tau) && Array.isArray(counts)) {
+                        const chartData = tau.map((t, i) => ({
+                            tau: t,
+                            count: counts[i] || 0
+                        }));
+                        setData(chartData);
+                    }
                 } else {
-                    console.error('Countrate error:', response.error);
+                    console.error('Correlation error:', response.error);
                 }
             });
 
             socketRef.current.on('disconnect', () => {
-                console.log('Disconnected from countrate socket');
+                console.log('Disconnected from correlation socket');
             });
         }
 
-        // Cleanup function for initial connection
         return () => {
             if (socketRef.current) {
                 socketRef.current.disconnect();
                 socketRef.current = null;
             }
         };
-    }, [isRunning, selectedChannels.length > 0]); // Re-connect if channels become empty/non-empty
+    }, [isRunning]);
 
-    // Runtime Configuration Effect: Update params when they change while running
+    // Runtime Configuration Effect
     useEffect(() => {
-        if (isRunning && socketRef.current && socketRef.current.connected && selectedChannels.length > 0) {
+        if (isRunning && socketRef.current && socketRef.current.connected) {
             socketRef.current.emit('configure', {
-                ch: selectedChannels.join(','),
+                ch: `${ch1},${ch2}`,
+                bwidth: binWidth,
+                nbins: nBins,
                 rtime: windowTime,
             });
         }
-    }, [selectedChannels, windowTime, isRunning]);
+    }, [ch1, ch2, binWidth, nBins, windowTime, isRunning]);
 
     const handleStart = () => {
         setIsRunning(true);
@@ -128,17 +126,6 @@ export default function CountrateMonitor({ isLaserOn = false }) {
     const handleStop = () => {
         setIsRunning(false);
         setData([]);
-        dataCountRef.current = 0;
-    };
-
-    const handleChannelToggle = (channel) => {
-        setSelectedChannels((prev) => {
-            if (prev.includes(channel)) {
-                return prev.filter((ch) => ch !== channel);
-            } else {
-                return [...prev, channel].sort((a, b) => a - b);
-            }
-        });
     };
 
     const channelColors = theme.palette.mode === 'dark' ? CHANNEL_COLORS_DARK : CHANNEL_COLORS_LIGHT;
@@ -156,7 +143,7 @@ export default function CountrateMonitor({ isLaserOn = false }) {
                     <Box display="flex" alignItems="center" gap={1.5}>
                         <Timeline sx={{ color: 'text.secondary' }} />
                         <Typography variant="h6" component="div" sx={{ fontWeight: 600 }}>
-                            Single Channel Countrate
+                            Correlation Histogram
                         </Typography>
                     </Box>
 
@@ -179,7 +166,6 @@ export default function CountrateMonitor({ isLaserOn = false }) {
                             color={isRunning ? "error" : "primary"}
                             startIcon={isRunning ? <Stop /> : <PlayArrow />}
                             onClick={isRunning ? handleStop : handleStart}
-                            disabled={!isRunning && selectedChannels.length === 0}
                             sx={{ fontWeight: 600 }}
                         >
                             {isRunning ? 'Stop' : 'Start'}
@@ -189,7 +175,38 @@ export default function CountrateMonitor({ isLaserOn = false }) {
 
                 <Box mb={4}>
                     <Grid container spacing={2} alignItems="center">
-                        <Grid item xs={12} sm={6}>
+                        {/* Channel Selection */}
+                        <Grid item xs={6} sm={2}>
+                            <FormControl fullWidth size="small">
+                                <InputLabel>Ch A</InputLabel>
+                                <Select
+                                    value={ch1}
+                                    label="Ch A"
+                                    onChange={(e) => setCh1(e.target.value)}
+                                >
+                                    {[1, 2, 3, 4, 5, 6, 7, 8].map(ch => (
+                                        <MenuItem key={ch} value={ch}>{ch}</MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+                        </Grid>
+                        <Grid item xs={6} sm={2}>
+                            <FormControl fullWidth size="small">
+                                <InputLabel>Ch B</InputLabel>
+                                <Select
+                                    value={ch2}
+                                    label="Ch B"
+                                    onChange={(e) => setCh2(e.target.value)}
+                                >
+                                    {[1, 2, 3, 4, 5, 6, 7, 8].map(ch => (
+                                        <MenuItem key={ch} value={ch}>{ch}</MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+                        </Grid>
+
+                        {/* Integration Time */}
+                        <Grid item xs={12} sm={3}>
                             <TextField
                                 label="Window"
                                 type="number"
@@ -198,78 +215,66 @@ export default function CountrateMonitor({ isLaserOn = false }) {
                                 size="small"
                                 fullWidth
                                 InputProps={{
-                                    endAdornment: <InputAdornment position="end">sec</InputAdornment>,
+                                    endAdornment: <InputAdornment position="end">s</InputAdornment>,
                                     inputProps: { step: 0.1, min: 0.1, max: 5.0 }
                                 }}
                             />
                         </Grid>
-                        <Grid item xs={12} sm={6}>
-                            <Paper
-                                variant="outlined"
-                                sx={{
-                                    p: 1.5,
-                                    backgroundColor: 'action.hover',
-                                    borderColor: 'divider'
+
+                        {/* Bin Width */}
+                        <Grid item xs={6} sm={2.5}>
+                            <TextField
+                                label="Bin Width"
+                                type="number"
+                                value={binWidth}
+                                onChange={(e) => setBinWidth(parseInt(e.target.value))}
+                                size="small"
+                                fullWidth
+                                InputProps={{
+                                    endAdornment: <InputAdornment position="end">ps</InputAdornment>,
+                                    inputProps: { step: 100, min: 100 }
                                 }}
-                            >
-                                <Typography variant="caption" sx={{
-                                    display: 'block',
-                                    mb: 1,
-                                    color: 'text.secondary',
-                                    fontWeight: 600
-                                }}>
-                                    Select Channels
-                                </Typography>
-                                <Box display="flex" gap={1} flexWrap="wrap">
-                                    {channels.map((channel) => {
-                                        const isSelected = selectedChannels.includes(channel);
-                                        return (
-                                            <Chip
-                                                key={channel}
-                                                label={`CH${channel}`}
-                                                onClick={() => handleChannelToggle(channel)}
-                                                variant={isSelected ? "filled" : "outlined"}
-                                                color={isSelected ? "primary" : "default"}
-                                                size="small"
-                                                disabled={false}
-                                                sx={{
-                                                    fontWeight: 500,
-                                                    borderWidth: isSelected ? 2 : 1,
-                                                    '& .MuiChip-label': {
-                                                        px: 1
-                                                    }
-                                                }}
-                                            />
-                                        );
-                                    })}
-                                </Box>
-                            </Paper>
+                            />
+                        </Grid>
+
+                        {/* Number of Bins */}
+                        <Grid item xs={6} sm={2.5}>
+                            <TextField
+                                label="Bins"
+                                type="number"
+                                value={nBins}
+                                onChange={(e) => setNBins(parseInt(e.target.value))}
+                                size="small"
+                                fullWidth
+                                InputProps={{
+                                    inputProps: { step: 10, min: 10, max: 2000 }
+                                }}
+                            />
                         </Grid>
                     </Grid>
                 </Box>
 
                 <Box sx={{ width: '100%', height: 400 }}>
                     <ResponsiveContainer>
-                        <LineChart data={data} margin={{ top: 5, right: 30, left: 60, bottom: 5 }}>
+                        <LineChart data={data} margin={{ top: 5, right: 30, left: 60, bottom: 25 }}>
                             <CartesianGrid
                                 strokeDasharray="3 3"
                                 stroke={theme.palette.divider}
                                 vertical={false}
                             />
                             <XAxis
-                                dataKey="time"
-                                axisLine={false}
-                                tickLine={false}
-                                tick={false}
+                                dataKey="tau"
+                                label={{ value: 'Delay (ps)', position: 'bottom', offset: 0 }}
+                                tick={{ fontSize: 12 }}
                             />
                             <YAxis
                                 domain={['auto', 'auto']}
                                 axisLine={false}
                                 tickLine={false}
-                                tickFormatter={(value) => Math.floor(value)}
+                                tickFormatter={(value) => value}
                                 tick={{ fill: theme.palette.text.secondary }}
                                 label={{
-                                    value: 'Counts/s',
+                                    value: 'Counts',
                                     angle: -90,
                                     position: 'insideLeft',
                                     offset: 0,
@@ -278,7 +283,6 @@ export default function CountrateMonitor({ isLaserOn = false }) {
                                 }}
                             />
                             <Tooltip
-                                labelStyle={{ display: 'none' }}
                                 contentStyle={{
                                     backgroundColor: theme.palette.background.paper,
                                     border: '1px solid',
@@ -288,43 +292,29 @@ export default function CountrateMonitor({ isLaserOn = false }) {
                                     color: theme.palette.text.primary
                                 }}
                             />
-                            <Legend
-                                wrapperStyle={{ paddingTop: 20 }}
-                                formatter={(value) => (
-                                    <span style={{ color: theme.palette.text.primary, fontWeight: 500 }}>
-                                        {value.replace('Channel ', 'CH')}
-                                    </span>
-                                )}
+
+                            <Line
+                                type="monotone"
+                                dataKey="count"
+                                stroke={theme.palette.primary.main}
+                                strokeWidth={2}
+                                name="Coincidences"
+                                dot={false}
+                                isAnimationActive={false}
                             />
-                            {selectedChannels.map((channel, index) => (
-                                <Line
-                                    key={channel}
-                                    type="monotone"
-                                    dataKey={channel.toString()}
-                                    stroke={channelColors[channel - 1]}
-                                    strokeWidth={2}
-                                    name={`Channel ${channel}`}
-                                    dot={false}
-                                    activeDot={{
-                                        r: 4,
-                                        strokeWidth: 2,
-                                        stroke: 'white'
-                                    }}
-                                    isAnimationActive={false}
-                                />
-                            ))}
                         </LineChart>
                     </ResponsiveContainer>
                 </Box>
 
                 <Box mt={3} display="flex" justifyContent="space-between" alignItems="center">
                     <Typography variant="caption" color="text.secondary">
-                        {selectedChannels.length} selected channel{selectedChannels.length !== 1 ? 's' : ''}
+                        Correlation: Ch{ch1} vs Ch{ch2}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                        Window: {windowTime}s
+                        Window: {windowTime}s • Range: {(binWidth * nBins) / 1000}ns
                     </Typography>
                 </Box>
+
             </CardContent>
         </Paper>
     );

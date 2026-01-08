@@ -1,16 +1,20 @@
-import { io } from 'socket.io-client';
+import { Manager } from 'socket.io-client';
 
-const SOCKET_URL = import.meta.env.DEV ? 'http://127.0.0.1:5003' : '';
+const SOCKET_URL = '';
 
-// Create socket instances for different namespaces
+// Explicitly create a single Manager to force one TCP connection for ALL sockets
+const manager = new Manager(SOCKET_URL, {
+    transports: ['polling', 'websocket'], // Allow polling first, then upgrade to WebSocket
+    reconnection: true,
+    reconnectionDelay: 5000,    // 5 seconds wait
+    reconnectionDelayMax: 10000,
+    reconnectionAttempts: Infinity,
+    timeout: 20000,
+});
+
+// Create socket instances for different namespaces from the SAME manager
 export const createSocket = (namespace) => {
-    return io(`${SOCKET_URL}${namespace}`, {
-        transports: ['polling'],
-        upgrade: false,
-        reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionAttempts: 5,
-    });
+    return manager.socket(namespace);
 };
 
 // Socket namespaces

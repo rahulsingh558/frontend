@@ -4,6 +4,7 @@ import LaserControlVertical from './LaserControlVertical';
 import TestSignals from './TestSignals';
 import CountrateMonitor from './CountrateMonitor';
 import CoincidenceMonitor from './CoincidenceMonitor';
+import CorrelationMonitor from './CorrelationMonitor';
 
 export default function DashboardNew() {
     const [isLaserOn, setIsLaserOn] = useState(false);
@@ -29,6 +30,7 @@ export default function DashboardNew() {
                     <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
                         <CountrateMonitor isLaserOn={isLaserOn} />
                         <CoincidenceMonitor isLaserOn={isLaserOn} />
+                        <CorrelationMonitor isLaserOn={isLaserOn} />
                     </Box>
                 </Box>
             </Container>

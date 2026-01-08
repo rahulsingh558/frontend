@@ -8,8 +8,20 @@ import {
     Grid,
     Paper,
     InputAdornment,
+    Chip,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    FormGroup,
+    FormControlLabel,
+    Checkbox,
+    Stack,
+    FormControl,
+    InputLabel,
+    OutlinedInput
 } from '@mui/material';
-import { Timeline, PlayArrow, Stop } from '@mui/icons-material';
+import { Timeline, PlayArrow, Stop, Add, Delete } from '@mui/icons-material';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { createSocket, NAMESPACES } from '../services/socket';
 
@@ -40,23 +52,29 @@ import { useTheme } from '@mui/material/styles';
 export default function CoincidenceMonitor({ isLaserOn = false }) {
     const theme = useTheme();
     const [isRunning, setIsRunning] = useState(false);
-    const [groups, setGroups] = useState("1,2");
-    const [windowTime, setWindowTime] = useState(1);
+    // State is now an array of arrays: [[1, 2], [3, 4]]
+    const [groups, setGroups] = useState([[1, 2]]);
+    const [windowTime, setWindowTime] = useState(0.5);
     const [cwin, setCwin] = useState(1000);
     const [data, setData] = useState([]);
     const socketRef = useRef(null);
     const dataCountRef = useRef(0);
 
-    // Parse the groups string into an array of strings for legends/keys
-    // "1,2; 3,4" -> ["1,2", "3,4"]
-    const getGroupList = (groupStr) => {
-        return groupStr.split(';').map(g => g.trim()).filter(g => g.length > 0);
+    // Dialog State
+    const [openDialog, setOpenDialog] = useState(false);
+    const [selectedChannels, setSelectedChannels] = useState([]);
+
+    // Helper to serialize groups for backend: [[1,2], [3,4]] -> "1,2;3,4"
+    const serializeGroups = (grpArray) => {
+        return grpArray.map(g => g.join(',')).join(';');
     };
+
+    // Helper to get legends: [[1,2]] -> ["1,2"]
+    const activeGroupKeys = groups.map(g => g.join(','));
 
     // Lifecycle effect: Connect/Disconnect based on isRunning AND having active groups
     useEffect(() => {
-        const groupList = getGroupList(groups);
-        const shouldConnect = isRunning && groupList.length > 0;
+        const shouldConnect = isRunning && groups.length > 0;
 
         if (shouldConnect) {
             // Reset data on new connection (start or resume)
@@ -69,7 +87,7 @@ export default function CoincidenceMonitor({ isLaserOn = false }) {
                 console.log('Connected to coincidence socket');
                 // Initial configuration
                 socketRef.current.emit('configure', {
-                    groups: groups,
+                    groups: serializeGroups(groups),
                     cwin: cwin,
                     rtime: windowTime,
                 });
@@ -86,7 +104,6 @@ export default function CoincidenceMonitor({ isLaserOn = false }) {
 
                     // response.rates is an array of integers corresponding to the groups
                     // we need to map the rates to our group keys
-                    // The backend returns rates in the same order as the groups
                     const configGroups = response.groups; // [[1,2], [3,4]]
                     const rates = response.rates; // [100, 200]
 
@@ -108,8 +125,8 @@ export default function CoincidenceMonitor({ isLaserOn = false }) {
 
                     setData((prevData) => {
                         const newData = [...prevData, newDataPoint];
-                        // Keep last 15 seconds of data
-                        return newData.filter(p => p.time > dataCountRef.current - 15);
+                        // Keep last 30 samples
+                        return newData.slice(-30);
                     });
                 } else {
                     console.error('Coincidence error:', response.error);
@@ -128,14 +145,13 @@ export default function CoincidenceMonitor({ isLaserOn = false }) {
                 socketRef.current = null;
             }
         };
-    }, [isRunning, groups.length > 0]); // Re-connect logic similar to Countrate
+    }, [isRunning, groups.length > 0]); // Re-connect if valid groups toggle
 
     // Runtime Configuration Effect
     useEffect(() => {
-        const groupList = getGroupList(groups);
-        if (isRunning && socketRef.current && socketRef.current.connected && groupList.length > 0) {
+        if (isRunning && socketRef.current && socketRef.current.connected && groups.length > 0) {
             socketRef.current.emit('configure', {
-                groups: groups,
+                groups: serializeGroups(groups),
                 cwin: cwin,
                 rtime: windowTime,
             });
@@ -152,8 +168,38 @@ export default function CoincidenceMonitor({ isLaserOn = false }) {
         dataCountRef.current = 0;
     };
 
+    // --- Dialog Handlers ---
+    const handleOpenDialog = () => {
+        setSelectedChannels([]); // Reset selection when opening
+        setOpenDialog(true);
+    };
+
+    const handleCloseDialog = () => {
+        setOpenDialog(false);
+    };
+
+    const handleChannelToggle = (ch) => {
+        if (selectedChannels.includes(ch)) {
+            setSelectedChannels(prev => prev.filter(c => c !== ch));
+        } else {
+            setSelectedChannels(prev => [...prev, ch].sort((a, b) => a - b));
+        }
+    };
+
+    const handleAddGroupConfim = () => {
+        if (selectedChannels.length >= 1) {
+            setGroups(prev => [...prev, selectedChannels]);
+            setOpenDialog(false);
+        } else {
+            alert("Please select at least 1 channel for a group.");
+        }
+    };
+
+    const handleDeleteGroup = (indexToDelete) => {
+        setGroups(prev => prev.filter((_, idx) => idx !== indexToDelete));
+    };
+
     const channelColors = theme.palette.mode === 'dark' ? CHANNEL_COLORS_DARK : CHANNEL_COLORS_LIGHT;
-    const activeGroups = getGroupList(groups);
 
     return (
         <Paper elevation={0} sx={{
@@ -191,7 +237,7 @@ export default function CoincidenceMonitor({ isLaserOn = false }) {
                             color={isRunning ? "error" : "primary"}
                             startIcon={isRunning ? <Stop /> : <PlayArrow />}
                             onClick={isRunning ? handleStop : handleStart}
-                            disabled={!isRunning && activeGroups.length === 0}
+                            disabled={!isRunning && groups.length === 0}
                             sx={{ fontWeight: 600 }}
                         >
                             {isRunning ? 'Stop' : 'Start'}
@@ -201,32 +247,8 @@ export default function CoincidenceMonitor({ isLaserOn = false }) {
 
                 <Box mb={4}>
                     <Grid container spacing={2} alignItems="center">
+                        {/* 1. Window Time */}
                         <Grid item xs={12} sm={4}>
-                            <TextField
-                                label="Groups (e.g. 1,2; 3,4)"
-                                value={groups}
-                                onChange={(e) => setGroups(e.target.value)}
-                                size="small"
-                                fullWidth
-                                variant="outlined"
-                                placeholder="1,2; 3,4"
-                            />
-                        </Grid>
-                        <Grid item xs={6} sm={4}>
-                            <TextField
-                                label="Coin. Window"
-                                type="number"
-                                value={cwin}
-                                onChange={(e) => setCwin(parseInt(e.target.value))}
-                                size="small"
-                                fullWidth
-                                InputProps={{
-                                    endAdornment: <InputAdornment position="end">ps</InputAdornment>,
-                                    inputProps: { step: 100, min: 1000, max: 10000 }
-                                }}
-                            />
-                        </Grid>
-                        <Grid item xs={6} sm={4}>
                             <TextField
                                 label="Window"
                                 type="number"
@@ -239,6 +261,77 @@ export default function CoincidenceMonitor({ isLaserOn = false }) {
                                     inputProps: { step: 0.1, min: 0.1, max: 5.0 }
                                 }}
                             />
+                        </Grid>
+
+                        {/* 2. Coincidence Window */}
+                        <Grid item xs={12} sm={4}>
+                            <TextField
+                                label="Coincidence Window"
+                                type="number"
+                                value={cwin}
+                                onChange={(e) => setCwin(parseInt(e.target.value))}
+                                size="small"
+                                fullWidth
+                                InputProps={{
+                                    endAdornment: <InputAdornment position="end">ps</InputAdornment>,
+                                    inputProps: { step: 100, min: 1000, max: 10000 }
+                                }}
+                            />
+                        </Grid>
+
+                        {/* 3. Active Groups (Standardized Input) */}
+                        <Grid item xs={12} sm={4}>
+                            <FormControl fullWidth size="small" variant="outlined" onClick={handleOpenDialog}>
+                                <InputLabel htmlFor="active-groups-display">Active Groups</InputLabel>
+                                <OutlinedInput
+                                    id="active-groups-display"
+                                    label="Active Groups"
+                                    readOnly
+                                    sx={{
+                                        cursor: 'pointer',
+                                        height: '40px', // Match standard small TextField height
+                                        '& .MuiOutlinedInput-input': {
+                                            display: 'none'
+                                        }
+                                    }}
+                                    startAdornment={
+                                        <Box sx={{
+                                            display: 'flex',
+                                            gap: 0.5,
+                                            overflowX: 'auto',
+                                            maxWidth: '100%',
+                                            scrollbarWidth: 'none',
+                                            '&::-webkit-scrollbar': { display: 'none' },
+                                            alignItems: 'center',
+                                            my: 0.5
+                                        }}>
+                                            {groups.length === 0 ? (
+                                                <Typography variant="body2" color="text.disabled" sx={{ whiteSpace: 'nowrap', mx: 0.5 }}>
+                                                    Click to add...
+                                                </Typography>
+                                            ) : (
+                                                groups.map((grp, idx) => (
+                                                    <Chip
+                                                        key={idx}
+                                                        label={grp.join('&')}
+                                                        onDelete={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDeleteGroup(idx);
+                                                        }}
+                                                        size="small"
+                                                        sx={{ height: 24 }}
+                                                    />
+                                                ))
+                                            )}
+                                        </Box>
+                                    }
+                                    endAdornment={
+                                        <InputAdornment position="end">
+                                            <Add fontSize="small" />
+                                        </InputAdornment>
+                                    }
+                                />
+                            </FormControl>
                         </Grid>
                     </Grid>
                 </Box>
@@ -291,8 +384,8 @@ export default function CoincidenceMonitor({ isLaserOn = false }) {
                                     </span>
                                 )}
                             />
-                            {/* Render lines for active groups, parsing input safely */}
-                            {activeGroups.map((groupKey, index) => (
+                            {/* Render lines for active groups */}
+                            {activeGroupKeys.map((groupKey, index) => (
                                 <Line
                                     key={groupKey}
                                     type="monotone"
@@ -315,14 +408,48 @@ export default function CoincidenceMonitor({ isLaserOn = false }) {
 
                 <Box mt={3} display="flex" justifyContent="space-between" alignItems="center">
                     <Typography variant="caption" color="text.secondary">
-                        {activeGroups.length} active group{activeGroups.length !== 1 ? 's' : ''}
+                        {groups.length} active group{groups.length !== 1 ? 's' : ''}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                        Window: {windowTime}s • Coin. Win: {cwin}ps
+                        Window: {windowTime}s • Coincidence Window: {cwin}ps
                     </Typography>
                 </Box>
 
             </CardContent>
+
+            {/* Add Group Dialog */}
+            <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="xs" fullWidth>
+                <DialogTitle>Add Coincidence Group</DialogTitle>
+                <DialogContent dividers>
+                    <Typography variant="body2" color="text.secondary" paragraph>
+                        Select 1 or more channels to check for coincidence.
+                    </Typography>
+                    <FormGroup sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+                        {[1, 2, 3, 4, 5, 6, 7, 8].map((ch) => (
+                            <FormControlLabel
+                                key={ch}
+                                control={
+                                    <Checkbox
+                                        checked={selectedChannels.includes(ch)}
+                                        onChange={() => handleChannelToggle(ch)}
+                                    />
+                                }
+                                label={`Channel ${ch}`}
+                            />
+                        ))}
+                    </FormGroup>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={handleCloseDialog}>Cancel</Button>
+                    <Button
+                        onClick={handleAddGroupConfim}
+                        variant="contained"
+                        disabled={selectedChannels.length < 1}
+                    >
+                        Add
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </Paper>
     );
 }
