@@ -83,10 +83,9 @@ export default function LaserControlVertical({ onStateChange }) {
             // Mark API call time to prevent WebSocket interference
             lastApiCallTime.current = Date.now();
 
-            // When turning ON, always start at 1.0 mW
-            // When turning OFF, don't send power parameter
+            // When turning ON or OFF, don't send power parameter
             const response = newState
-                ? await laserAPI.control(1, 1.0)
+                ? await laserAPI.control(1)
                 : await laserAPI.control(0);
 
             // Backend returns numeric status: 200 for success, 400 for error

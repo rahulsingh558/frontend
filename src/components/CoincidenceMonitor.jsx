@@ -54,7 +54,7 @@ export default function CoincidenceMonitor({ isLaserOn = false }) {
     const [isRunning, setIsRunning] = useState(false);
     // State is now an array of arrays: [[1, 2], [3, 4]]
     const [groups, setGroups] = useState([[1, 2]]);
-    const [windowTime, setWindowTime] = useState(0.5);
+    const [windowTime, setWindowTime] = useState(1);
     const [cwin, setCwin] = useState(1000);
     const [data, setData] = useState([]);
     const socketRef = useRef(null);

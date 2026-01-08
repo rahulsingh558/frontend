@@ -47,7 +47,7 @@ export default function CorrelationMonitor({ isLaserOn = false }) {
     // Configuration State
     const [ch1, setCh1] = useState(1);
     const [ch2, setCh2] = useState(2);
-    const [windowTime, setWindowTime] = useState(0.5);
+    const [windowTime, setWindowTime] = useState(1);
     const [binWidth, setBinWidth] = useState(1000); // ps
     const [nBins, setNBins] = useState(50);
 
